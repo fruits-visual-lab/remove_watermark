@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>✦ 透かし除去（クロップ方式）</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #1a1a2e; color: #e0e0e0;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    padding: 24px;
+  }
+  h1 { font-size: 1.6rem; margin-bottom: 8px; color: #fff; }
+  .subtitle { font-size: 0.9rem; color: #888; margin-bottom: 20px; }
+
+  #drop-zone {
+    width: 100%; max-width: 700px;
+    border: 3px dashed #444; border-radius: 16px;
+    padding: 50px 20px; text-align: center; cursor: pointer;
+    background: #16213e; margin-bottom: 24px;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  #drop-zone.dragover { border-color: #6c63ff; background: #1a1a40; }
+  #drop-zone p { font-size: 1.1rem; color: #aaa; pointer-events: none; }
+  #drop-zone .icon { font-size: 3rem; margin-bottom: 12px; pointer-events: none; }
+  #file-input { display: none; }
+
+  #results {
+    width: 100%; max-width: 900px;
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  .card {
+    background: #16213e; border-radius: 12px; padding: 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .card-header {
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
+  }
+  .filename { font-size: 0.85rem; color: #888; }
+  .badge {
+    font-size: 0.8rem; padding: 3px 10px; border-radius: 6px;
+    background: #1b4332; color: #52b788;
+  }
+  .card img { width: 100%; border-radius: 8px; background: #0f0f23; }
+
+  .slider-row {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .slider-row input[type=range] {
+    flex: 1; accent-color: #6c63ff; height: 6px;
+  }
+  .slider-row .scale-label {
+    font-size: 1.1rem; font-weight: bold; color: #6c63ff;
+    min-width: 40px; text-align: center;
+  }
+
+  .btn {
+    padding: 8px 20px; border: none; border-radius: 8px;
+    cursor: pointer; font-size: 0.9rem; font-weight: 500;
+    background: #6c63ff; color: #fff; transition: opacity 0.2s;
+    align-self: flex-start;
+  }
+  .btn:hover { opacity: 0.85; }
+  #dl-all { margin-bottom: 16px; display: none; }
+</style>
+</head>
+<body>
+
+<h1>✦ 透かし除去</h1>
+<p class="subtitle">画像を中央クロップして✦を除去</p>
+
+<div id="drop-zone" tabindex="0">
+  <div class="icon">📂</div>
+  <p>画像をここにドラッグ＆ドロップ<br>またはクリックして選択</p>
+</div>
+<input type="file" id="file-input" accept="image/*" multiple>
+
+<button class="btn" id="dl-all">すべてダウンロード</button>
+<div id="results"></div>
+
+<script>
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const results = document.getElementById('results');
+const dlAll = document.getElementById('dl-all');
+const processed = [];
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  handle(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', () => { handle(fileInput.files); fileInput.value = ''; });
+
+function handle(files) {
+  for (const f of files) if (f.type.startsWith('image/')) addCard(f);
+}
+
+async function addCard(file) {
+  const img = await loadImg(file);
+  const ow = img.width, oh = img.height;
+  const ext = file.name.split('.').pop().toLowerCase();
+  const mime = (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : 'image/png';
+
+  let currentScale = 1.2;
+
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'card-header';
+  const fnSpan = document.createElement('span');
+  fnSpan.className = 'filename';
+  fnSpan.textContent = file.name;
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  header.appendChild(fnSpan);
+  header.appendChild(badge);
+  card.appendChild(header);
+
+  // Preview
+  const preview = document.createElement('img');
+  card.appendChild(preview);
+
+  // Slider
+  const sliderRow = document.createElement('div');
+  sliderRow.className = 'slider-row';
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '1.05'; slider.max = '1.50'; slider.step = '0.01'; slider.value = '1.25';
+  const label = document.createElement('span');
+  label.className = 'scale-label';
+  sliderRow.appendChild(slider);
+  sliderRow.appendChild(label);
+  card.appendChild(sliderRow);
+
+  // Download button
+  const dlBtn = document.createElement('button');
+  dlBtn.className = 'btn';
+  dlBtn.textContent = 'ダウンロード';
+  card.appendChild(dlBtn);
+
+  // Crop & update
+  let currentUrl = '';
+  function reCrop(s) {
+    currentScale = s;
+    const nw = Math.round(ow / s);
+    const nh = Math.round(oh / s);
+    const left = Math.floor((ow - nw) / 2);
+    const top = Math.floor((oh - nh) / 2);
+    const c = document.createElement('canvas');
+    c.width = nw; c.height = nh;
+    c.getContext('2d').drawImage(img, left, top, nw, nh, 0, 0, nw, nh);
+    currentUrl = c.toDataURL(mime, 0.95);
+    preview.src = currentUrl;
+    badge.textContent = `×${s.toFixed(2)} : ${ow}×${oh} → ${nw}×${nh}`;
+    label.textContent = `×${s.toFixed(2)}`;
+    const idx = processed.findIndex(p => p.name === file.name);
+    if (idx >= 0) processed[idx].url = currentUrl;
+  }
+
+  slider.addEventListener('input', () => reCrop(parseFloat(slider.value)));
+  dlBtn.addEventListener('click', () => dl(currentUrl, file.name));
+
+  // Initial crop
+  reCrop(1.25);
+  processed.push({ name: file.name, url: currentUrl });
+  if (processed.length > 1) dlAll.style.display = '';
+
+  results.prepend(card);
+}
+
+function loadImg(file) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = rej;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function dl(url, name) {
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.click();
+}
+
+dlAll.onclick = () => processed.forEach(f => dl(f.url, f.name));
+</script>
+</body>
+</html>
