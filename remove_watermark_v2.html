@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>✦ 透かし除去 v2（範囲指定）</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #1a1a2e; color: #e0e0e0;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    padding: 24px;
+  }
+  h1 { font-size: 1.6rem; margin-bottom: 8px; color: #fff; }
+  .subtitle { font-size: 0.9rem; color: #888; margin-bottom: 20px; }
+
+  #drop-zone {
+    width: 100%; max-width: 700px;
+    border: 3px dashed #444; border-radius: 16px;
+    padding: 50px 20px; text-align: center; cursor: pointer;
+    background: #16213e; margin-bottom: 24px;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  #drop-zone.dragover { border-color: #6c63ff; background: #1a1a40; }
+  #drop-zone.hidden { display: none; }
+  #drop-zone p { font-size: 1.1rem; color: #aaa; pointer-events: none; }
+  #drop-zone .icon { font-size: 3rem; margin-bottom: 12px; pointer-events: none; }
+  #file-input { display: none; }
+
+  #editor { display: none; width: 100%; max-width: 1100px; }
+
+  .toolbar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .toolbar .info {
+    font-size: 0.85rem; color: #888; margin-left: auto;
+  }
+
+  .btn {
+    padding: 8px 20px; border: none; border-radius: 8px;
+    cursor: pointer; font-size: 0.9rem; font-weight: 500;
+    transition: opacity 0.2s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn-primary { background: #6c63ff; color: #fff; }
+  .btn-secondary { background: #333; color: #ccc; }
+  .btn-success { background: #1b4332; color: #52b788; }
+  .btn-active { background: #6c63ff; color: #fff; }
+
+  #dl-name {
+    padding: 6px 12px; border: 1px solid #444; border-radius: 8px;
+    background: #222; color: #e0e0e0; font-size: 0.9rem;
+    width: 180px; outline: none;
+    transition: border-color 0.2s;
+  }
+  #dl-name:focus { border-color: #6c63ff; }
+  #dl-name::placeholder { color: #555; }
+
+  .ratio-group {
+    display: flex; gap: 4px; align-items: center;
+  }
+  .ratio-group .label { font-size: 0.8rem; color: #888; margin-right: 4px; }
+  .ratio-btn {
+    padding: 4px 10px; border: 1px solid #444; border-radius: 6px;
+    background: #222; color: #aaa; cursor: pointer; font-size: 0.8rem;
+    transition: all 0.15s;
+  }
+  .ratio-btn:hover { border-color: #6c63ff; color: #ccc; }
+  .ratio-btn.active { background: #6c63ff; color: #fff; border-color: #6c63ff; }
+
+  .editor-layout {
+    display: flex; gap: 20px; width: 100%;
+  }
+  @media (max-width: 800px) {
+    .editor-layout { flex-direction: column; }
+  }
+
+  .canvas-wrap {
+    flex: 1; position: relative; background: #0f0f23; border-radius: 12px;
+    overflow: hidden; cursor: crosshair; min-height: 300px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #main-canvas { display: block; max-width: 100%; }
+
+  .preview-panel {
+    width: 280px; min-width: 280px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .preview-panel h3 { font-size: 0.95rem; color: #aaa; }
+  #preview-canvas {
+    width: 100%; border-radius: 8px; background: #0f0f23;
+  }
+  .crop-info {
+    font-size: 0.8rem; color: #666; line-height: 1.6;
+  }
+
+  .handle-info {
+    font-size: 0.8rem; color: #555; margin-top: 8px; line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<h1>✦ 透かし除去 v2</h1>
+<p class="subtitle">クロップ範囲をドラッグで自由に指定</p>
+
+<div id="drop-zone" tabindex="0">
+  <div class="icon">📂</div>
+  <p>画像をここにドラッグ＆ドロップ<br>またはクリックして選択</p>
+</div>
+<input type="file" id="file-input" accept="image/*">
+
+<div id="editor">
+  <div class="toolbar">
+    <button class="btn btn-secondary" id="btn-reset">リセット</button>
+    <button class="btn btn-secondary" id="btn-center">中央に戻す</button>
+    <button class="btn btn-secondary" id="btn-new">別の画像</button>
+    <input type="text" id="dl-name" placeholder="ファイル名">
+    <button class="btn btn-success" id="btn-dl">ダウンロード</button>
+    <div class="ratio-group">
+      <span class="label">比率:</span>
+      <button class="ratio-btn active" data-ratio="free">自由</button>
+      <button class="ratio-btn" data-ratio="16:9">16:9</button>
+      <button class="ratio-btn" data-ratio="9:16">9:16</button>
+      <button class="ratio-btn" data-ratio="4:3">4:3</button>
+      <button class="ratio-btn" data-ratio="1:1">1:1</button>
+      <button class="ratio-btn" data-ratio="original">元比率</button>
+    </div>
+    <span class="info" id="file-info"></span>
+  </div>
+  <div class="editor-layout">
+    <div class="canvas-wrap" id="canvas-wrap">
+      <canvas id="main-canvas"></canvas>
+    </div>
+    <div class="preview-panel">
+      <h3>プレビュー</h3>
+      <canvas id="preview-canvas"></canvas>
+      <div class="crop-info" id="crop-info"></div>
+      <div class="handle-info">
+        操作：<br>
+        ・枠内ドラッグ → 移動<br>
+        ・四隅ドラッグ → リサイズ<br>
+        ・辺ドラッグ → 片側リサイズ
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const editorEl = document.getElementById('editor');
+const mainCanvas = document.getElementById('main-canvas');
+const previewCanvas = document.getElementById('preview-canvas');
+const cropInfoEl = document.getElementById('crop-info');
+const fileInfoEl = document.getElementById('file-info');
+const canvasWrap = document.getElementById('canvas-wrap');
+const dlNameInput = document.getElementById('dl-name');
+
+const ctx = mainCanvas.getContext('2d');
+const pctx = previewCanvas.getContext('2d');
+
+let img = null;
+let fileName = '';
+let fileMime = 'image/png';
+
+// Display scale (canvas pixels vs CSS pixels)
+let displayScale = 1;
+// Image to canvas scale
+let imgToCanvas = 1;
+
+// Crop rect in IMAGE coordinates
+let crop = { x: 0, y: 0, w: 0, h: 0 };
+let isFirstImage = true;
+
+// ダウンロード時にクロップを確定保存（次の画像に引き継ぐ）
+let confirmedCrop = null;
+
+// Aspect ratio lock
+let lockedRatio = null; // null = free, number = w/h
+
+// Interaction state
+let dragging = null; // null | 'move' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w'
+let dragStart = { mx: 0, my: 0, cx: 0, cy: 0, cw: 0, ch: 0 };
+
+const HANDLE = 10;
+const MIN_SIZE = 30;
+
+// ── File handling ──
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); fileInput.value = ''; });
+
+function loadFile(file) {
+  if (!file.type.startsWith('image/')) return;
+  fileName = file.name;
+  const ext = file.name.split('.').pop().toLowerCase();
+  fileMime = (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : 'image/png';
+
+  const i = new Image();
+  i.onload = () => {
+    img = i;
+
+    if (confirmedCrop) {
+      // ダウンロード済みのクロップを復元
+      crop.x = confirmedCrop.x;
+      crop.y = confirmedCrop.y;
+      crop.w = confirmedCrop.w;
+      crop.h = confirmedCrop.h;
+      // はみ出す場合のみ調整
+      crop.w = Math.min(crop.w, img.width);
+      crop.h = Math.min(crop.h, img.height);
+      crop.x = clamp(crop.x, 0, Math.max(0, img.width - crop.w));
+      crop.y = clamp(crop.y, 0, Math.max(0, img.height - crop.h));
+    } else {
+      // 初回（未ダウンロード）: デフォルト 1.25x center crop
+      const scale = 1.25;
+      crop.w = Math.round(img.width / scale);
+      crop.h = Math.round(img.height / scale);
+      crop.x = Math.floor((img.width - crop.w) / 2);
+      crop.y = Math.floor((img.height - crop.h) / 2);
+    }
+
+    showEditor();
+  };
+  i.src = URL.createObjectURL(file);
+}
+
+// エディタ上でも直接ドロップで次の画像を読み込める
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  if (editorEl.style.display === 'block' && e.dataTransfer.files[0]) {
+    loadFile(e.dataTransfer.files[0]);
+  }
+});
+
+let showEditorId = 0; // rAFキャンセル用
+function showEditor() {
+  dropZone.classList.add('hidden');
+  editorEl.style.display = 'block';
+
+  // 前のrAFが残っていたらキャンセル（連続ドロップ時にcrop上書き防止）
+  if (showEditorId) cancelAnimationFrame(showEditorId);
+
+  showEditorId = requestAnimationFrame(() => {
+    showEditorId = 0;
+    fileInfoEl.textContent = `${fileName}  (${img.width}×${img.height})`;
+    dlNameInput.value = fileName;
+    fitCanvas();
+    draw();
+  });
+}
+
+function fitCanvas() {
+  const maxW = canvasWrap.clientWidth || 700;
+  const maxH = window.innerHeight * 0.65;
+  imgToCanvas = Math.min(maxW / img.width, maxH / img.height, 1);
+
+  const cw = Math.round(img.width * imgToCanvas);
+  const ch = Math.round(img.height * imgToCanvas);
+
+  mainCanvas.width = cw;
+  mainCanvas.height = ch;
+  mainCanvas.style.width = cw + 'px';
+  mainCanvas.style.height = ch + 'px';
+}
+
+// ── Drawing ──
+function draw() {
+  const cw = mainCanvas.width, ch = mainCanvas.height;
+  ctx.clearRect(0, 0, cw, ch);
+
+  // Draw image
+  ctx.drawImage(img, 0, 0, cw, ch);
+
+  // Dim outside crop
+  const cx = crop.x * imgToCanvas;
+  const cy = crop.y * imgToCanvas;
+  const crw = crop.w * imgToCanvas;
+  const crh = crop.h * imgToCanvas;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  // top
+  ctx.fillRect(0, 0, cw, cy);
+  // bottom
+  ctx.fillRect(0, cy + crh, cw, ch - cy - crh);
+  // left
+  ctx.fillRect(0, cy, cx, crh);
+  // right
+  ctx.fillRect(cx + crw, cy, cw - cx - crw, crh);
+
+  // Crop border
+  ctx.strokeStyle = '#6c63ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(cx, cy, crw, crh);
+
+  // Handles
+  const handles = getHandleRects(cx, cy, crw, crh);
+  ctx.fillStyle = '#6c63ff';
+  for (const h of Object.values(handles)) {
+    ctx.fillRect(h.x, h.y, h.w, h.h);
+  }
+
+  // Grid lines (thirds)
+  ctx.strokeStyle = 'rgba(108,99,255,0.3)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 2; i++) {
+    const gx = cx + (crw / 3) * i;
+    const gy = cy + (crh / 3) * i;
+    ctx.beginPath(); ctx.moveTo(gx, cy); ctx.lineTo(gx, cy + crh); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, gy); ctx.lineTo(cx + crw, gy); ctx.stroke();
+  }
+
+  updatePreview();
+}
+
+function getHandleRects(cx, cy, cw, ch) {
+  const s = HANDLE;
+  const hs = s / 2;
+  return {
+    nw: { x: cx - hs, y: cy - hs, w: s, h: s },
+    ne: { x: cx + cw - hs, y: cy - hs, w: s, h: s },
+    sw: { x: cx - hs, y: cy + ch - hs, w: s, h: s },
+    se: { x: cx + cw - hs, y: cy + ch - hs, w: s, h: s },
+    n:  { x: cx + cw/2 - hs, y: cy - hs, w: s, h: s },
+    s:  { x: cx + cw/2 - hs, y: cy + ch - hs, w: s, h: s },
+    w:  { x: cx - hs, y: cy + ch/2 - hs, w: s, h: s },
+    e:  { x: cx + cw - hs, y: cy + ch/2 - hs, w: s, h: s },
+  };
+}
+
+function updatePreview() {
+  const pw = previewCanvas.clientWidth || 280;
+  const scale = pw / crop.w;
+  const ph = Math.round(crop.h * scale);
+
+  previewCanvas.width = pw;
+  previewCanvas.height = ph;
+  previewCanvas.style.height = ph + 'px';
+
+  pctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, pw, ph);
+
+  const pct = ((1 - (crop.w * crop.h) / (img.width * img.height)) * 100).toFixed(1);
+  cropInfoEl.innerHTML =
+    `元画像: ${img.width}×${img.height}<br>` +
+    `クロップ: ${crop.w}×${crop.h}<br>` +
+    `位置: (${crop.x}, ${crop.y})<br>` +
+    `削除面積: ${pct}%`;
+}
+
+// ── Interaction ──
+function getMousePos(e) {
+  const rect = mainCanvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left) * (mainCanvas.width / rect.width),
+    y: (e.clientY - rect.top) * (mainCanvas.height / rect.height)
+  };
+}
+
+function hitTest(mx, my) {
+  const cx = crop.x * imgToCanvas;
+  const cy = crop.y * imgToCanvas;
+  const cw = crop.w * imgToCanvas;
+  const ch = crop.h * imgToCanvas;
+
+  const handles = getHandleRects(cx, cy, cw, ch);
+  const margin = 4;
+  for (const [name, h] of Object.entries(handles)) {
+    if (mx >= h.x - margin && mx <= h.x + h.w + margin &&
+        my >= h.y - margin && my <= h.y + h.h + margin) {
+      return name;
+    }
+  }
+
+  if (mx >= cx && mx <= cx + cw && my >= cy && my <= cy + ch) {
+    return 'move';
+  }
+  return null;
+}
+
+function getCursor(hit) {
+  const map = {
+    nw: 'nw-resize', ne: 'ne-resize', sw: 'sw-resize', se: 'se-resize',
+    n: 'n-resize', s: 's-resize', w: 'w-resize', e: 'e-resize',
+    move: 'grab'
+  };
+  return map[hit] || 'crosshair';
+}
+
+mainCanvas.addEventListener('mousemove', e => {
+  if (dragging) return;
+  const pos = getMousePos(e);
+  const hit = hitTest(pos.x, pos.y);
+  mainCanvas.style.cursor = getCursor(hit);
+});
+
+mainCanvas.addEventListener('mousedown', e => {
+  e.preventDefault();
+  const pos = getMousePos(e);
+  const hit = hitTest(pos.x, pos.y);
+  if (!hit) return;
+
+  dragging = hit;
+  dragStart = {
+    mx: pos.x, my: pos.y,
+    cx: crop.x, cy: crop.y, cw: crop.w, ch: crop.h
+  };
+
+  if (hit === 'move') mainCanvas.style.cursor = 'grabbing';
+});
+
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const pos = getMousePos(e);
+  const dx = (pos.x - dragStart.mx) / imgToCanvas;
+  const dy = (pos.y - dragStart.my) / imgToCanvas;
+
+  const s = dragStart;
+
+  if (dragging === 'move') {
+    crop.x = clamp(s.cx + dx, 0, img.width - crop.w);
+    crop.y = clamp(s.cy + dy, 0, img.height - crop.h);
+  } else {
+    let nx = s.cx, ny = s.cy, nw = s.cw, nh = s.ch;
+
+    if (lockedRatio && dragging.length === 1) {
+      // 辺ドラッグ時はアスペクト比固定なら四隅扱いに変換
+      if (dragging === 'n' || dragging === 's') {
+        // 幅の主軸を高さに合わせる
+      } else {
+        // 高さの主軸を幅に合わせる
+      }
+    }
+
+    if (dragging.includes('w')) {
+      nw = Math.max(MIN_SIZE, s.cw - dx);
+      nx = s.cx + s.cw - nw;
+    }
+    if (dragging.includes('e')) {
+      nw = Math.max(MIN_SIZE, s.cw + dx);
+    }
+    if (dragging.includes('n')) {
+      nh = Math.max(MIN_SIZE, s.ch - dy);
+      ny = s.cy + s.ch - nh;
+    }
+    if (dragging.includes('s')) {
+      nh = Math.max(MIN_SIZE, s.ch + dy);
+    }
+
+    // Enforce aspect ratio
+    if (lockedRatio) {
+      const isCorner = dragging.length === 2;
+      const isHoriz = dragging === 'e' || dragging === 'w';
+      const isVert = dragging === 'n' || dragging === 's';
+
+      if (isCorner || isHoriz) {
+        // Width drives height
+        nh = Math.round(nw / lockedRatio);
+      } else if (isVert) {
+        // Height drives width
+        nw = Math.round(nh * lockedRatio);
+      }
+
+      // Adjust anchor for corners/edges
+      if (dragging.includes('n')) {
+        ny = s.cy + s.ch - nh;
+      }
+      if (dragging.includes('w')) {
+        nx = s.cx + s.cw - nw;
+      }
+    }
+
+    // Clamp to image bounds
+    if (nx < 0) { nw += nx; nx = 0; if (lockedRatio) nh = Math.round(nw / lockedRatio); }
+    if (ny < 0) { nh += ny; ny = 0; if (lockedRatio) nw = Math.round(nh * lockedRatio); }
+    if (nx + nw > img.width) { nw = img.width - nx; if (lockedRatio) nh = Math.round(nw / lockedRatio); }
+    if (ny + nh > img.height) { nh = img.height - ny; if (lockedRatio) nw = Math.round(nh * lockedRatio); }
+
+    crop.x = Math.round(nx);
+    crop.y = Math.round(ny);
+    crop.w = Math.round(nw);
+    crop.h = Math.round(nh);
+  }
+
+  crop.x = Math.round(crop.x);
+  crop.y = Math.round(crop.y);
+  draw();
+});
+
+window.addEventListener('mouseup', () => {
+  if (dragging === 'move') mainCanvas.style.cursor = 'grab';
+  dragging = null;
+});
+
+// ── Touch support ──
+mainCanvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const touch = e.touches[0];
+  const rect = mainCanvas.getBoundingClientRect();
+  const pos = {
+    x: (touch.clientX - rect.left) * (mainCanvas.width / rect.width),
+    y: (touch.clientY - rect.top) * (mainCanvas.height / rect.height)
+  };
+  const hit = hitTest(pos.x, pos.y);
+  if (!hit) return;
+  dragging = hit;
+  dragStart = {
+    mx: pos.x, my: pos.y,
+    cx: crop.x, cy: crop.y, cw: crop.w, ch: crop.h
+  };
+}, { passive: false });
+
+mainCanvas.addEventListener('touchmove', e => {
+  if (!dragging) return;
+  e.preventDefault();
+  const touch = e.touches[0];
+  const rect = mainCanvas.getBoundingClientRect();
+  const pos = {
+    x: (touch.clientX - rect.left) * (mainCanvas.width / rect.width),
+    y: (touch.clientY - rect.top) * (mainCanvas.height / rect.height)
+  };
+  const dx = (pos.x - dragStart.mx) / imgToCanvas;
+  const dy = (pos.y - dragStart.my) / imgToCanvas;
+  const s = dragStart;
+
+  if (dragging === 'move') {
+    crop.x = clamp(s.cx + dx, 0, img.width - crop.w);
+    crop.y = clamp(s.cy + dy, 0, img.height - crop.h);
+  } else {
+    let nx = s.cx, ny = s.cy, nw = s.cw, nh = s.ch;
+    if (dragging.includes('w')) { nw = Math.max(MIN_SIZE, s.cw - dx); nx = s.cx + s.cw - nw; }
+    if (dragging.includes('e')) { nw = Math.max(MIN_SIZE, s.cw + dx); }
+    if (dragging.includes('n')) { nh = Math.max(MIN_SIZE, s.ch - dy); ny = s.cy + s.ch - nh; }
+    if (dragging.includes('s')) { nh = Math.max(MIN_SIZE, s.ch + dy); }
+    if (lockedRatio) {
+      const isHoriz = dragging === 'e' || dragging === 'w';
+      const isVert = dragging === 'n' || dragging === 's';
+      if (!isVert) { nh = Math.round(nw / lockedRatio); } else { nw = Math.round(nh * lockedRatio); }
+      if (dragging.includes('n')) ny = s.cy + s.ch - nh;
+      if (dragging.includes('w')) nx = s.cx + s.cw - nw;
+    }
+    if (nx < 0) { nw += nx; nx = 0; if (lockedRatio) nh = Math.round(nw / lockedRatio); }
+    if (ny < 0) { nh += ny; ny = 0; if (lockedRatio) nw = Math.round(nh * lockedRatio); }
+    if (nx + nw > img.width) { nw = img.width - nx; if (lockedRatio) nh = Math.round(nw / lockedRatio); }
+    if (ny + nh > img.height) { nh = img.height - ny; if (lockedRatio) nw = Math.round(nh * lockedRatio); }
+    crop.x = Math.round(nx);
+    crop.y = Math.round(ny);
+    crop.w = Math.round(nw);
+    crop.h = Math.round(nh);
+  }
+  crop.x = Math.round(crop.x);
+  crop.y = Math.round(crop.y);
+  draw();
+}, { passive: false });
+
+mainCanvas.addEventListener('touchend', () => { dragging = null; });
+
+// ── Buttons ──
+document.getElementById('btn-reset').addEventListener('click', () => {
+  if (!img) return;
+  // Reset ratio and crop memory
+  lockedRatio = null;
+  confirmedCrop = null;
+  document.querySelectorAll('.ratio-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('.ratio-btn[data-ratio="free"]').classList.add('active');
+  const scale = 1.25;
+  crop.w = Math.round(img.width / scale);
+  crop.h = Math.round(img.height / scale);
+  crop.x = Math.floor((img.width - crop.w) / 2);
+  crop.y = Math.floor((img.height - crop.h) / 2);
+  draw();
+});
+
+document.getElementById('btn-center').addEventListener('click', () => {
+  if (!img) return;
+  crop.x = Math.floor((img.width - crop.w) / 2);
+  crop.y = Math.floor((img.height - crop.h) / 2);
+  draw();
+});
+
+document.getElementById('btn-new').addEventListener('click', () => {
+  editorEl.style.display = 'none';
+  dropZone.style.display = '';
+  dropZone.classList.remove('hidden');
+  img = null;
+});
+
+function doDownload() {
+  if (!img) return;
+  const c = document.createElement('canvas');
+  c.width = crop.w;
+  c.height = crop.h;
+  c.getContext('2d').drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
+
+  let saveName = dlNameInput.value.trim() || fileName;
+  if (!saveName.match(/\.\w+$/)) {
+    const ext = fileMime === 'image/jpeg' ? '.jpg' : '.png';
+    saveName += ext;
+  }
+
+  confirmedCrop = { x: crop.x, y: crop.y, w: crop.w, h: crop.h };
+
+  const url = c.toDataURL(fileMime, 0.95);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = saveName;
+  a.click();
+}
+
+document.getElementById('btn-dl').addEventListener('click', doDownload);
+dlNameInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); doDownload(); }
+});
+
+function clamp(v, min, max) { return Math.min(Math.max(v, min), max); }
+
+// ── Aspect ratio buttons ──
+const ratioMap = {
+  'free': null,
+  '16:9': 16/9,
+  '9:16': 9/16,
+  '4:3': 4/3,
+  '1:1': 1,
+  'original': null // computed on click
+};
+
+document.querySelectorAll('.ratio-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.ratio-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    const key = btn.dataset.ratio;
+    if (key === 'free') {
+      lockedRatio = null;
+    } else if (key === 'original') {
+      lockedRatio = img ? img.width / img.height : null;
+    } else {
+      lockedRatio = ratioMap[key];
+    }
+
+    // Apply ratio to current crop if locked
+    if (lockedRatio && img) {
+      const currentRatio = crop.w / crop.h;
+      const centerX = crop.x + crop.w / 2;
+      const centerY = crop.y + crop.h / 2;
+
+      if (currentRatio > lockedRatio) {
+        // Too wide → shrink width
+        crop.w = Math.round(crop.h * lockedRatio);
+      } else {
+        // Too tall → shrink height
+        crop.h = Math.round(crop.w / lockedRatio);
+      }
+
+      // Re-center
+      crop.x = Math.round(clamp(centerX - crop.w / 2, 0, img.width - crop.w));
+      crop.y = Math.round(clamp(centerY - crop.h / 2, 0, img.height - crop.h));
+      draw();
+    }
+  });
+});
+
+// Handle window resize (クロップ値には触らず描画だけ更新)
+window.addEventListener('resize', () => {
+  if (!img) return;
+  fitCanvas();
+  draw();
+});
+</script>
+</body>
+</html>
